@@ -1,0 +1,34 @@
+name: mini_cloud_app
+description: A Mini Cloud app for file upload/download and listing.
+publish_to: "none" # private app
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Networking
+  http: ^1.5.0
+
+  # File picker
+  file_picker: ^10.3.3
+
+  # Path operations
+  path_provider: 2.1.5
+
+  # State management (optional)
+  provider: ^6.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 5.0.0
+
+flutter:
+  uses-material-design: true
+
+#  assets:
+#    - assets/  # folder for any images or static files
