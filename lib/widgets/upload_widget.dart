@@ -15,10 +15,13 @@ class UploadWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ElevatedButton.icon(
-      icon: const Icon(Icons.upload_file),
-      label: const Text("Upload File"),
-      onPressed: pickFile,
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: ElevatedButton.icon(
+        icon: const Icon(Icons.upload_file),
+        label: const Text("Upload File"),
+        onPressed: pickFile,
+      ),
     );
   }
 }

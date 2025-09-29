@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../services/file_service.dart';
+import '../widgets/file_list_widget.dart';
+import '../widgets/upload_widget.dart';
+import 'package:file_picker/file_picker.dart';
 
 class HomeScreen extends StatefulWidget {
   final String baseUrl;
@@ -14,7 +17,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late ApiService apiService;
   late FileService fileService;
   List<String> files = [];
   bool loading = false;
@@ -22,51 +24,39 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    apiService = ApiService(baseUrl: widget.baseUrl, token: widget.token);
-    fileService = FileService(apiService: apiService);
+    fileService = FileService(baseUrl: widget.baseUrl, token: widget.token);
     fetchFiles();
   }
 
   Future<void> fetchFiles() async {
     setState(() => loading = true);
-    files = await fileService.getFiles();
+    files = await fileService.listFiles();
     setState(() => loading = false);
   }
 
-  Future<void> pickAndUpload() async {
-    await fileService.pickAndUpload();
-    fetchFiles();
+  void uploadFile(PlatformFile file) async {
+    bool success = await fileService.uploadFile(file);
+    if (success) fetchFiles();
   }
 
-  Future<void> downloadFile(String filename) async {
-    await fileService.download(filename);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("$filename downloaded")),
-    );
+  void downloadFile(String fileName) async {
+    File? file = await fileService.downloadFile(fileName);
+    if (file != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${file.path} downloaded")));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Mini Cloud")),
+      appBar: AppBar(title: Text("Mini Cloud")),
       body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-        itemCount: files.length,
-        itemBuilder: (_, index) {
-          final file = files[index];
-          return ListTile(
-            title: Text(file),
-            trailing: IconButton(
-              icon: const Icon(Icons.download),
-              onPressed: () => downloadFile(file),
-            ),
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton(
-        child: const Icon(Icons.upload),
-        onPressed: pickAndUpload,
+          ? Center(child: CircularProgressIndicator())
+          : Column(
+        children: [
+          UploadWidget(onUpload: uploadFile),
+          Expanded(child: FileListWidget(files: files, onDownload: downloadFile)),
+        ],
       ),
     );
   }

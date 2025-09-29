@@ -19,13 +19,13 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(
           builder: (_) => HomeScreen(
             baseUrl: "https://rudravcloud.onrender.com",
-            token: "dummy_token_for_demo",
+            token: "dummy_token_for_demo", // replace with real token if backend auth added
           ),
         ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Enter username and password")),
+        SnackBar(content: Text("Enter username and password")),
       );
     }
   }
@@ -33,22 +33,15 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Login")),
+      appBar: AppBar(title: Text("Login")),
       body: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.all(20),
         child: Column(
           children: [
-            TextField(
-              controller: _usernameController,
-              decoration: const InputDecoration(labelText: "Username"),
-            ),
-            TextField(
-              controller: _passwordController,
-              decoration: const InputDecoration(labelText: "Password"),
-              obscureText: true,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(onPressed: login, child: const Text("Login")),
+            TextField(controller: _usernameController, decoration: InputDecoration(labelText: "Username")),
+            TextField(controller: _passwordController, decoration: InputDecoration(labelText: "Password"), obscureText: true),
+            SizedBox(height: 20),
+            ElevatedButton(onPressed: login, child: Text("Login"))
           ],
         ),
       ),
