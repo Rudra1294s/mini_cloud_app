@@ -1,7 +1,10 @@
+// lib/services/api_service.dart
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 class FileItem {
   final String name;
@@ -12,9 +15,9 @@ class FileItem {
 
   factory FileItem.fromJson(Map<String, dynamic> json) {
     return FileItem(
-      id: json['id'] ?? '',
-      name: json['name'] ?? 'Unnamed',
-      size: json['size'] ?? 0,
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? 'Unnamed',
+      size: int.tryParse(json['size']?.toString() ?? '') ?? 0,
     );
   }
 }
@@ -22,75 +25,92 @@ class FileItem {
 class ApiService {
   final String baseUrl;
   final String token;
+  final Duration timeout;
 
-  ApiService({required this.baseUrl, required this.token});
+  ApiService({required this.baseUrl, required this.token, this.timeout = const Duration(minutes: 2)});
 
   // ------------------ GET FILES ------------------
   Future<List<FileItem>> getFiles() async {
     try {
-      final url = Uri.parse('$baseUrl/recent_files/'); // ✅ Update endpoint
-      final response = await http.get(url, headers: {'Authorization': 'Bearer $token'});
+      final url = Uri.parse('$baseUrl/recent_files/');
+      final resp = await http.get(url, headers: _authHeader()).timeout(timeout);
+      print('GET FILES -> status: ${resp.statusCode}, body: ${resp.body}');
 
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
+      if (resp.statusCode == 200) {
+        final jsonData = jsonDecode(resp.body);
         final List<dynamic> filesData = jsonData["files"] ?? [];
-        return filesData.map((f) => FileItem(id: f, name: f, size: 0)).toList(); // filenames only
-      } else if (response.statusCode == 404) {
-        print("Endpoint not found: $url");
-        return [];
+        // If API returns objects, try parsing; if it returns list of names, handle that too
+        return filesData.map<FileItem>((f) {
+          if (f is Map<String, dynamic>) return FileItem.fromJson(f);
+          return FileItem(id: f.toString(), name: f.toString(), size: 0);
+        }).toList();
       } else {
-        print("Server error ${response.statusCode}: ${response.reasonPhrase}");
         return [];
       }
     } catch (e) {
-      print("Get files error: $e");
+      print('Get files error: $e');
       return [];
     }
   }
 
-
   // ------------------ UPLOAD FILE ------------------
   Future<bool> uploadFile(PlatformFile file) async {
     try {
-      final url = Uri.parse('$baseUrl/upload_chunk/');
-      var request = http.MultipartRequest('POST', url)
-        ..headers['Authorization'] = 'Bearer $token'
-        ..files.add(await http.MultipartFile.fromPath('file', file.path!));
+      final uri = Uri.parse('$baseUrl/upload'); // adjust if backend uses /upload_chunk/
+      final request = http.MultipartRequest('POST', uri);
+      request.headers.addAll(_authHeader());
 
-      var response = await request.send();
-
-      if (response.statusCode == 200) {
-        print("File uploaded successfully: ${file.name}");
-        return true;
+      // add file either from path or bytes
+      if (file.path != null && file.path!.isNotEmpty) {
+        request.files.add(await http.MultipartFile.fromPath('file', file.path!, filename: file.name));
+      } else if (file.bytes != null) {
+        request.files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name));
       } else {
-        print("Upload failed with status: ${response.statusCode}");
+        print('Upload Error: no file path and no bytes available');
         return false;
       }
+
+      // optional additional fields
+      request.fields['uploaded_by'] = request.fields['uploaded_by'] ?? 'flutter_user';
+
+      final streamed = await request.send().timeout(timeout);
+      final response = await http.Response.fromStream(streamed);
+      print('UPLOAD -> status: ${response.statusCode}, body: ${response.body}');
+
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } on TimeoutException catch (e) {
+      print('Upload Timeout: $e');
+      return false;
     } catch (e) {
-      print("Upload error: $e");
+      print('Upload error: $e');
       return false;
     }
   }
 
   // ------------------ DOWNLOAD FILE ------------------
-  Future<bool> downloadFile(String fileName, String savePath) async {
+  Future<File?> downloadFile(String fileName) async {
     try {
-      final url = Uri.parse('$baseUrl/download_chunk/$fileName'); // ✅ updated endpoint
-      final response = await http.get(url, headers: {'Authorization': 'Bearer $token'});
+      final url = Uri.parse('$baseUrl/download_chunk/$fileName'); // adjust if needed
+      final resp = await http.get(url, headers: _authHeader()).timeout(timeout);
+      print('DOWNLOAD -> status: ${resp.statusCode}');
 
-      if (response.statusCode == 200) {
-        final file = File(savePath);
-        await file.writeAsBytes(response.bodyBytes);
-        print("File downloaded: $savePath");
-        return true;
+      if (resp.statusCode == 200) {
+        final dir = await getApplicationDocumentsDirectory();
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsBytes(resp.bodyBytes);
+        return file;
       } else {
-        print("Download failed with status: ${response.statusCode}");
-        return false;
+        print('Download failed: ${resp.statusCode} ${resp.body}');
+        return null;
       }
     } catch (e) {
-      print("Download error: $e");
-      return false;
+      print('Download error: $e');
+      return null;
     }
   }
 
+  Map<String, String> _authHeader() {
+    if (token.isNotEmpty) return {'Authorization': 'Bearer $token'};
+    return {};
+  }
 }
