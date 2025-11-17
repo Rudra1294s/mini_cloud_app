@@ -101,20 +101,14 @@ class FileService {
     }
   }
 
-  // ---------------- DOWNLOAD ----------------
   Future<void> downloadFile(String fileName) async {
     try {
       final resp = await dio.get<List<int>>(
-        "/download_chunk/$fileName",
+        "/download_by_name/$fileName",
         options: Options(
-          responseType: ResponseType.bytes,
-          headers: token.isNotEmpty ? {"Authorization": "Bearer $token"} : null,
-        ),
-      );
-
-      // WEB (browser download)
+          responseType: ResponseType.bytes, headers: token.isNotEmpty ?
+        {"Authorization": "Bearer $token"} : null, ), );
       if (kIsWeb) {
-        // resp.data might be a List<int> / Uint8List — ensure it's accepted by Blob
         final data = resp.data ?? <int>[];
         final blob = html.Blob([data]);
         final url = html.Url.createObjectUrlFromBlob(blob);
@@ -122,9 +116,8 @@ class FileService {
           ..setAttribute("download", fileName)
           ..click();
         html.Url.revokeObjectUrl(url);
-        return;
+          return;
       }
-
       // MOBILE + DESKTOP saving
       final dir = await path_provider.getApplicationDocumentsDirectory();
       final file = io.File("${dir.path}/$fileName");
@@ -135,26 +128,28 @@ class FileService {
     }
   }
 
-  // ---------------- LIST FILES ----------------
-  Future<List<String>> listFiles() async {
-    try {
-      final resp = await dio.get(
-        "/recent_files/",
-        options: Options(
-          headers: token.isNotEmpty ? {"Authorization": "Bearer $token"} : null,
-        ),
-      );
+    // ---------------- LIST FILES ----------------
+    Future<List<String>> listFiles() async {
+      try {
+        final resp = await dio.get(
+          "/api/files",
+          options: Options(
+            headers: token.isNotEmpty ? {"Authorization": "Bearer $token"} : null,
+          ),
+        );
 
-      if (resp.statusCode == 200) {
-        final data = resp.data;
-        if (data is Map && data["files"] != null) {
-          return (data["files"] as List).map((e) => e.toString()).toList();
+        if (resp.statusCode == 200) {
+          final data = resp.data;
+          if (data is Map && data["files"] != null) {
+            return (data["files"] as List)
+                .map<String>((e) => e["name"].toString())
+                .toList();
+          }
         }
+        return [];
+      } catch (e) {
+        print("LIST FILES ERROR: $e");
+        return [];
       }
-      return [];
-    } catch (e) {
-      print("LIST FILES ERROR: $e");
-      return [];
     }
-  }
-}
+    }

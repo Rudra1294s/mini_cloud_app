@@ -32,7 +32,7 @@ class ApiService {
   // ------------------ GET FILES ------------------
   Future<List<FileItem>> getFiles() async {
     try {
-      final url = Uri.parse('$baseUrl/recent_files/');
+      final url = Uri.parse('$baseUrl/');
       final resp = await http.get(url, headers: _authHeader()).timeout(timeout);
       print('GET FILES -> status: ${resp.statusCode}, body: ${resp.body}');
 
