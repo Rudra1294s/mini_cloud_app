@@ -19,7 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(
           builder: (_) => HomeScreen(
             baseUrl: "https://rudravcloud.onrender.com",
-            token: "dummy_token_for_demo", // replace with real token if backend auth added
+            token: "",
           ),
         ),
       );

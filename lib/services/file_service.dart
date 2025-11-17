@@ -1,112 +1,159 @@
 // lib/services/file_service.dart
-import 'dart:io';
-import 'dart:typed_data';
-import 'package:http/http.dart' as http;
+import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'dart:io' as io;             // Only works on mobile/desktop
+import 'package:path_provider/path_provider.dart' as path_provider;
+import 'dart:html' as html;         // Only works on web
 
 class FileService {
   final String baseUrl;
   final String token;
-  final Duration timeout;
+  final Dio dio;
 
-  FileService({required this.baseUrl, required this.token, this.timeout = const Duration(minutes: 2)});
-
-  Future<bool> uploadFile(PlatformFile file) async {
-    try {
-      final uri = Uri.parse('$baseUrl/upload'); // <- ensure backend endpoint is /upload
-      final request = http.MultipartRequest('POST', uri);
-
-      if (token.isNotEmpty) {
-        request.headers['Authorization'] = 'Bearer $token';
-      }
-
-      // Build multipart file either from path or from bytes (web / SAF safe)
-      if (file.path != null && file.path!.isNotEmpty) {
-        // prefer fromPath when available
-        request.files.add(await http.MultipartFile.fromPath('file', file.path!, filename: file.name));
-      } else if (file.bytes != null) {
-        final bytes = file.bytes!;
-        request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: file.name));
-      } else {
-        print('Upload Error: file has no path and no bytes.');
-        return false;
-      }
-
-      // Optional extra fields (if backend expects)
-      request.fields['uploaded_by'] = request.fields['uploaded_by'] ?? 'flutter_user';
-
-      // send request with timeout and read full response body for debugging
-      final streamed = await request.send().timeout(timeout);
-      final response = await http.Response.fromStream(streamed);
-
-      print('UPLOAD -> status: ${response.statusCode}');
-      print('UPLOAD -> body: ${response.body}');
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return true;
-      } else {
-        // try to decode JSON error if any
-        try {
-          final Map<String, dynamic> data = jsonDecode(response.body);
-          print('Upload failed response json: $data');
-        } catch (_) {
-          print('Upload failed response (non-json): ${response.body}');
+  FileService({required this.baseUrl, required this.token})
+      : dio = Dio(BaseOptions(
+    baseUrl: _normalizeBaseUrl(baseUrl),
+    connectTimeout: const Duration(minutes: 2),
+    receiveTimeout: const Duration(minutes: 2),
+  )) {
+    // Simple logging interceptor for debugging
+    dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        print('→ REQUEST: ${options.method} ${options.uri}');
+        print('  headers: ${options.headers}');
+        handler.next(options);
+      },
+      onResponse: (r, handler) {
+        print('← RESPONSE ${r.statusCode}: ${r.requestOptions.method} ${r.requestOptions.uri}');
+        handler.next(r);
+      },
+      onError: (e, handler) {
+        print('!! DIO ERROR (${e.type}) for ${e.requestOptions.method} ${e.requestOptions.uri}');
+        if (e.response != null) {
+          print('   status: ${e.response?.statusCode}');
+          print('   data: ${e.response?.data}');
+        } else {
+          print('   no response (likely network/CORS/mixed-content)');
         }
+        handler.next(e);
+      },
+    ));
+  }
+
+  // Ensure baseUrl includes scheme (helps catch mistakes)
+  static String _normalizeBaseUrl(String url) {
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      throw ArgumentError.value(url, 'baseUrl', 'baseUrl must start with http:// or https://');
+    }
+    return url;
+  }
+
+  // ---------------- UPLOAD ----------------
+  Future<bool> uploadFile(PlatformFile file,
+      {void Function(int sent, int total)? onProgress}) async {
+    try {
+      MultipartFile mfile;
+
+      // Web → use bytes
+      if (kIsWeb) {
+        if (file.bytes == null) {
+          print("WEB ERROR: File bytes are NULL. Use FilePicker withData:true.");
+          return false;
+        }
+        mfile = MultipartFile.fromBytes(file.bytes!, filename: file.name);
+      }
+
+      // Mobile/Desktop → use path if available
+      else if (file.path != null && file.path!.isNotEmpty) {
+        mfile = await MultipartFile.fromFile(file.path!, filename: file.name);
+      }
+
+      // Fallback → use bytes
+      else if (file.bytes != null) {
+        mfile = MultipartFile.fromBytes(file.bytes!, filename: file.name);
+      } else {
+        print("UPLOAD ERROR: No path + no bytes.");
         return false;
       }
-    } on http.ClientException catch (e) {
-      print('Upload ClientException: $e');
-      return false;
-    } on IOException catch (e) {
-      print('Upload IO Error: $e');
-      return false;
-    } on TimeoutException catch (e) {
-      print('Upload Timeout: $e');
-      return false;
-    } catch (e) {
-      print('Upload Unexpected Error: $e');
+
+      final form = FormData.fromMap({
+        "file": mfile,
+        "uploaded_by": "universal_user",
+      });
+
+      final resp = await dio.post(
+        "/upload",
+        data: form,
+        options: Options(
+          headers: token.isNotEmpty ? {"Authorization": "Bearer $token"} : null,
+        ),
+        onSendProgress: onProgress,
+      );
+
+      print("UPLOAD STATUS: ${resp.statusCode} | ${resp.data}");
+      return resp.statusCode == 200 || resp.statusCode == 201;
+    } catch (e, st) {
+      print("UPLOAD ERROR: $e\n$st");
       return false;
     }
   }
 
-  Future<File?> downloadFile(String fileName) async {
+  // ---------------- DOWNLOAD ----------------
+  Future<void> downloadFile(String fileName) async {
     try {
-      final url = Uri.parse('$baseUrl/download_chunk/$fileName'); // keep as your backend route
-      final response = await http.get(url, headers: {'Authorization': 'Bearer $token'}).timeout(timeout);
+      final resp = await dio.get<List<int>>(
+        "/download_chunk/$fileName",
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: token.isNotEmpty ? {"Authorization": "Bearer $token"} : null,
+        ),
+      );
 
-      print('DOWNLOAD -> status: ${response.statusCode}');
-      if (response.statusCode == 200) {
-        final dir = await getApplicationDocumentsDirectory();
-        final saved = File('${dir.path}/$fileName');
-        await saved.writeAsBytes(response.bodyBytes);
-        return saved;
-      } else {
-        print('Download failed: ${response.statusCode} ${response.body}');
-        return null;
+      // WEB (browser download)
+      if (kIsWeb) {
+        // resp.data might be a List<int> / Uint8List — ensure it's accepted by Blob
+        final data = resp.data ?? <int>[];
+        final blob = html.Blob([data]);
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute("download", fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+        return;
       }
-    } catch (e) {
-      print('Download Error: $e');
-      return null;
+
+      // MOBILE + DESKTOP saving
+      final dir = await path_provider.getApplicationDocumentsDirectory();
+      final file = io.File("${dir.path}/$fileName");
+      await file.writeAsBytes(resp.data ?? <int>[]);
+      print("Saved to ${file.path}");
+    } catch (e, st) {
+      print("DOWNLOAD ERROR: $e\n$st");
     }
   }
 
+  // ---------------- LIST FILES ----------------
   Future<List<String>> listFiles() async {
     try {
-      final url = Uri.parse('$baseUrl/recent_files/');
-      final response = await http.get(url, headers: {'Authorization': 'Bearer $token'}).timeout(timeout);
+      final resp = await dio.get(
+        "/recent_files/",
+        options: Options(
+          headers: token.isNotEmpty ? {"Authorization": "Bearer $token"} : null,
+        ),
+      );
 
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        final List<dynamic> files = jsonData["files"] ?? [];
-        return files.map((f) => f.toString()).toList();
-      } else {
-        print('List files failed: ${response.statusCode} ${response.body}');
-        return [];
+      if (resp.statusCode == 200) {
+        final data = resp.data;
+        if (data is Map && data["files"] != null) {
+          return (data["files"] as List).map((e) => e.toString()).toList();
+        }
       }
+      return [];
     } catch (e) {
-      print('List Error: $e');
+      print("LIST FILES ERROR: $e");
       return [];
     }
   }

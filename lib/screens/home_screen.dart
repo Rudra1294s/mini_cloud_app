@@ -1,6 +1,6 @@
-import 'dart:io';
+// lib/screens/home_screen.dart
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
 import '../services/file_service.dart';
 import '../widgets/file_list_widget.dart';
 import '../widgets/upload_widget.dart';
@@ -20,6 +20,8 @@ class _HomeScreenState extends State<HomeScreen> {
   late FileService fileService;
   List<String> files = [];
   bool loading = false;
+  double uploadProgress = 0.0;
+  bool uploading = false;
 
   @override
   void initState() {
@@ -30,32 +32,95 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> fetchFiles() async {
     setState(() => loading = true);
-    files = await fileService.listFiles();
-    setState(() => loading = false);
+    try {
+      final list = await fileService.listFiles();
+      setState(() => files = list);
+    } catch (e) {
+      debugPrint('fetchFiles error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not load files')));
+    } finally {
+      setState(() => loading = false);
+    }
   }
 
+  // called by UploadWidget
   void uploadFile(PlatformFile file) async {
-    bool success = await fileService.uploadFile(file);
-    if (success) fetchFiles();
+    setState(() {
+      uploading = true;
+      uploadProgress = 0.0;
+    });
+
+    final success = await fileService.uploadFile(file, onProgress: (sent, total) {
+      if (total != 0) {
+        setState(() => uploadProgress = sent / total);
+      }
+    });
+
+    setState(() {
+      uploading = false;
+      uploadProgress = 0.0;
+    });
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upload succeeded')));
+      await fetchFiles();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Upload failed')));
+    }
   }
 
   void downloadFile(String fileName) async {
-    File? file = await fileService.downloadFile(fileName);
-    if (file != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${file.path} downloaded")));
+    // universal FileService.downloadFile handles web vs io internally
+    try {
+      await fileService.downloadFile(fileName);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$fileName download started/completed')));
+    } catch (e) {
+      debugPrint('downloadFile error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Download failed')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Mini Cloud")),
+      appBar: AppBar(title: const Text("Mini Cloud")),
       body: loading
-          ? Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator())
           : Column(
         children: [
-          UploadWidget(onUpload: uploadFile),
-          Expanded(child: FileListWidget(files: files, onDownload: downloadFile)),
+          // Upload button + progress
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              children: [
+                UploadWidget(onUpload: uploadFile),
+                if (uploading)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: LinearProgressIndicator(value: uploadProgress),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(),
+          // File list
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: fetchFiles,
+              child: files.isEmpty
+                  ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
+                  SizedBox(height: 80),
+                  Center(child: Text('No files found. Pull to refresh.')),
+                ],
+              )
+                  : FileListWidget(
+                files: files,
+                onDownload: downloadFile,
+              ),
+            ),
+          ),
         ],
       ),
     );
